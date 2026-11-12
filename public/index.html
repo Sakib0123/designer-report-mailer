@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Designer Work Report Generator</title>
+<style>
+:root{--bg:#f3f5f9;--surface:#fff;--ink:#16203a;--muted:#5d6885;--line:#d8deeb;--accent:#2745c9;--accent-ink:#fff;--soft:#e8edfb;--warn:#b3261e;--ok:#1b7a4b;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Manrope",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:920px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 22px}
+section{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+h2{font-size:16px;margin:0 0 12px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px}
+input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+textarea{resize:vertical;min-height:60px}
+.task{border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;background:var(--surface)}
+.task-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-weight:700}
+.wide{grid-column:1/-1}
+button{font:inherit;font-weight:700;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:9px 14px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.link{border:none;background:none;color:var(--warn);padding:2px 6px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--soft);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font-size:20px}
+.stat span{font-size:12px;color:var(--muted)}
+#msg{min-height:22px;margin-top:10px;font-size:14px;color:var(--muted)}
+#msg.err{color:var(--warn)}
+</style>
+</head>
+<body>
+<main>
+<h1>Designer work report</h1>
+<p class="sub">Enter the designer’s details and tasks, then download a PDF report.</p>
+
+<section>
+<h2>Designer</h2>
+<div class="grid">
+<div><label for="name">Name</label><input id="name" autocomplete="off" placeholder="e.g. Ayesha Rahman"></div>
+<div><label for="role">Designation</label><input id="role" autocomplete="off" placeholder="e.g. Senior UI/UX Designer"></div>
+<div><label for="email">Email</label><input id="email" type="email" autocomplete="off" placeholder="designer@company.com"></div>
+</div>
+</section>
+
+<section>
+<h2>Tasks</h2>
+<div id="tasks"></div>
+<button type="button" id="add">Add task</button>
+</section>
+
+<section>
+<h2>Report</h2>
+<div class="stats" id="stats"></div>
+<div class="bar"><button type="button" class="primary" id="dl">Download PDF report</button><button type="button" id="mail">Email report to designer</button></div>
+<div id="msg" role="status" aria-live="polite"></div>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const tasksEl=$('#tasks'), msg=$('#msg');
+let uid=0;
+
+function taskHTML(id){return `<div class="task" data-id="${id}">
+<div class="task-head"><span class="tt">Task</span><button type="button" class="link rm">Remove</button></div>
+<div class="grid">
+<div><label>Date</label><input type="date" class="f-date"></div>
+<div><label>Project name</label><input class="f-project" placeholder="Project"></div>
+<div><label>Flow</label><input class="f-flow" placeholder="e.g. Checkout flow"></div>
+<div><label>Estimated time (hours)</label><input type="number" min="0" step="0.25" class="f-est" placeholder="0"></div>
+<div><label>Time spent (hours)</label><input type="number" min="0" step="0.25" class="f-spent" placeholder="0"></div>
+<div class="wide"><label>Description</label><textarea class="f-desc" placeholder="What was done in this task?"></textarea></div>
+</div></div>`}
+
+function addTask(){
+  const d=document.createElement('div');d.innerHTML=taskHTML(++uid);
+  const el=d.firstElementChild;
+  el.querySelector('.f-date').value=new Date().toISOString().slice(0,10);
+  tasksEl.appendChild(el);renumber();stats();
+}
+function renumber(){[...tasksEl.children].forEach((t,i)=>t.querySelector('.tt').textContent='Task '+(i+1))}
+const num=v=>{const n=parseFloat(v);return isFinite(n)&&n>0?n:0};
+const hrs=n=>(Math.round(n*100)/100)+' h';
+const sgn=n=>(n>0?'+':'')+hrs(n);
+const fdate=s=>{if(!s)return '-';const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})};
+
+function collect(){
+  return [...tasksEl.children].map(t=>({
+    date:t.querySelector('.f-date').value,
+    project:t.querySelector('.f-project').value.trim(),
+    flow:t.querySelector('.f-flow').value.trim(),
+    desc:t.querySelector('.f-desc').value.trim(),
+    est:num(t.querySelector('.f-est').value),
+    spent:num(t.querySelector('.f-spent').value)
+  })).filter(t=>t.project||t.flow||t.desc||t.est||t.spent)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+}
+function totals(ts){
+  const est=ts.reduce((s,t)=>s+t.est,0), spent=ts.reduce((s,t)=>s+t.spent,0);
+  return {est,spent,diff:spent-est};
+}
+function stats(){
+  const ts=collect(), t=totals(ts);
+  $('#stats').innerHTML=[['Tasks',ts.length],['Estimated',hrs(t.est)],['Spent',hrs(t.spent)],['Difference',sgn(t.diff)]]
+    .map(([l,v])=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+}
+
+tasksEl.addEventListener('input',stats);
+tasksEl.addEventListener('click',e=>{
+  if(e.target.classList.contains('rm')){
+    if(tasksEl.children.length===1){msg.className='';msg.textContent='Keep at least one task row.';return}
+    e.target.closest('.task').remove();renumber();stats();
+  }
+});
+$('#add').onclick=addTask;
+
+function buildPDF(){
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape',unit:'pt',format:'a4'});
+  const W=doc.internal.pageSize.getWidth(), M=36;
+  const name=$('#name').value.trim()||'Designer', role=$('#role').value.trim()||'-';
+  const ts=collect(), t=totals(ts);
+  const dates=ts.map(x=>x.date).filter(Boolean);
+  const period=dates.length?(dates[0]===dates[dates.length-1]?fdate(dates[0]):fdate(dates[0])+' to '+fdate(dates[dates.length-1])):'-';
+
+  doc.setFillColor(39,69,201);doc.rect(0,0,W,86,'F');
+  doc.setTextColor(255,255,255);
+  doc.setFont('helvetica','bold');doc.setFontSize(22);doc.text(name,M,40);
+  doc.setFont('helvetica','normal');doc.setFontSize(12);doc.text(role+($('#email').value.trim()?'   |   '+$('#email').value.trim():''),M,60);
+  doc.setFont('helvetica','bold');doc.setFontSize(14);doc.text('Work Report',W-M,38,{align:'right'});
+  doc.setFont('helvetica','normal');doc.setFontSize(10);
+  doc.text('Period: '+period,W-M,56,{align:'right'});
+  doc.text('Generated: '+fdate(new Date().toISOString().slice(0,10)),W-M,70,{align:'right'});
+
+  const boxes=[['Tasks',String(ts.length)],['Estimated time',hrs(t.est)],['Time spent',hrs(t.spent)],['Difference (spent - est.)',sgn(t.diff)]];
+  const bw=(W-2*M-30)/4;
+  boxes.forEach(([l,v],i)=>{
+    const x=M+i*(bw+10);
+    doc.setFillColor(232,237,251);doc.roundedRect(x,106,bw,52,5,5,'F');
+    doc.setTextColor(93,104,133);doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text(l,x+10,122);
+    doc.setTextColor(22,32,58);doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text(v,x+10,145);
+  });
+
+  const head={fillColor:[22,32,58],textColor:255,fontStyle:'bold',fontSize:9};
+  doc.autoTable({
+    startY:176,margin:{left:M,right:M,bottom:40},theme:'grid',
+    head:[['Date','Project','Flow','Description','Est.','Spent','Diff.']],
+    body:ts.map(x=>[fdate(x.date),x.project||'-',x.flow||'-',x.desc||'-',hrs(x.est),hrs(x.spent),sgn(x.spent-x.est)]),
+    headStyles:head,
+    styles:{fontSize:9,cellPadding:5,lineColor:[216,222,235],lineWidth:.5,textColor:[22,32,58],overflow:'linebreak'},
+    alternateRowStyles:{fillColor:[247,249,253]},
+    columnStyles:{0:{cellWidth:62},1:{cellWidth:100},2:{cellWidth:105},4:{cellWidth:48,halign:'right'},5:{cellWidth:48,halign:'right'},6:{cellWidth:52,halign:'right'}},
+    didParseCell:d=>{if(d.section==='body'&&d.column.index===6){
+      const v=parseFloat(d.cell.raw);d.cell.styles.fontStyle='bold';
+      d.cell.styles.textColor=v>0?[179,38,30]:[27,122,75];}}
+  });
+
+  const byP={};
+  ts.forEach(x=>{const k=x.project||'(No project)';(byP[k]=byP[k]||{n:0,est:0,spent:0});byP[k].n++;byP[k].est+=x.est;byP[k].spent+=x.spent});
+  const rows=Object.entries(byP).map(([k,v])=>[k,String(v.n),hrs(v.est),hrs(v.spent),sgn(v.spent-v.est)]);
+  let y=doc.lastAutoTable.finalY+26;
+  if(y>doc.internal.pageSize.getHeight()-120){doc.addPage();y=50}
+  doc.setTextColor(22,32,58);doc.setFont('helvetica','bold');doc.setFontSize(12);doc.text('Summary by project',M,y);
+  doc.autoTable({
+    startY:y+8,margin:{left:M,right:M,bottom:40},theme:'grid',
+    head:[['Project','Tasks','Estimated','Spent','Diff.']],body:rows,
+    headStyles:head,styles:{fontSize:9,cellPadding:5,lineColor:[216,222,235],lineWidth:.5,textColor:[22,32,58]},
+    columnStyles:{1:{halign:'right'},2:{halign:'right'},3:{halign:'right'},4:{halign:'right'}}
+  });
+
+  const pages=doc.internal.getNumberOfPages();
+  for(let i=1;i<=pages;i++){
+    doc.setPage(i);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(120,128,150);
+    const H=doc.internal.pageSize.getHeight();
+    doc.text(name+' - Work Report',M,H-18);
+    doc.text('Page '+i+' of '+pages,W-M,H-18,{align:'right'});
+  }
+  return {blob:doc.output('blob'),name};
+}
+
+async function savePDF(){
+  msg.className='';
+  if(!collect().length){msg.className='err';msg.textContent='Add at least one task with a project, description or time first.';return false}
+  if(!window.jspdf){msg.className='err';msg.textContent='The PDF library did not load. Reload the page and try again.';return false}
+  const {blob,name}=buildPDF();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='work-report-'+name.replace(/[^\w\-]+/g,'_')+'.pdf';
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  msg.textContent='Report downloaded.';return true;
+}
+const toB64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(b)});
+$('#dl').onclick=savePDF;
+$('#mail').onclick=async()=>{
+  const to=$('#email').value.trim(), btn=$('#mail');
+  msg.className='';
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){msg.className='err';msg.textContent='Enter a valid designer email address first.';$('#email').focus();return}
+  if(!collect().length){msg.className='err';msg.textContent='Add at least one task with a project, description or time first.';return}
+  btn.disabled=true;msg.textContent='Sending report...';
+  try{
+    const {blob,name}=buildPDF();
+    const r=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      to,name,role:$('#role').value.trim(),filename:'work-report-'+name.replace(/[^\w\-]+/g,'_')+'.pdf',pdf:await toB64(blob)})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.error||'Server error '+r.status);
+    msg.textContent=j.dryRun?'Test mode: message built but not delivered.':'Report emailed to '+to+'.';
+  }catch(e){msg.className='err';msg.textContent='Could not send: '+e.message}
+  finally{btn.disabled=false}
+};
+
+addTask();
+</script>
+</body>
+</html>
